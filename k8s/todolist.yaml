@@ -1,0 +1,89 @@
+# ABOUTME: Minimal Kubernetes manifest to deploy the todolist app on kind.
+# ABOUTME: Namespace + Deployment + ClusterIP Service + Ingress (host todolist.local).
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: todolist
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: todolist
+  namespace: todolist
+  labels:
+    app: todolist
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: todolist
+  template:
+    metadata:
+      labels:
+        app: todolist
+    spec:
+      containers:
+        - name: todolist
+          # Troque SEU_USUARIO_DOCKERHUB pelo seu usuário do Docker Hub.
+          # O cd.yml reescreve esta linha com a tag escolhida no workflow_dispatch.
+          image: SEU_USUARIO_DOCKERHUB/app-k8s-todolist:latest
+          ports:
+            - containerPort: 5000
+          env:
+            - name: APP_PORT
+              value: "5000"
+            - name: APP_COLOR
+              value: purple
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 5000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 5000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: todolist
+  namespace: todolist
+  labels:
+    app: todolist
+spec:
+  type: ClusterIP
+  selector:
+    app: todolist
+  ports:
+    - port: 80
+      targetPort: 5000
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: todolist
+  namespace: todolist
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: todolist.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: todolist
+                port:
+                  number: 80

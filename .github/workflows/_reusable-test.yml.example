@@ -1,0 +1,48 @@
+# ABOUTME: Esqueleto do reusable workflow que concentra os steps de teste do CI.
+# ABOUTME: Renomeie para _reusable-test.yml e complete os TODOs.
+#
+# Por que o prefixo _ : convenção que sinaliza workflow de apoio, chamado por
+# outros via `uses:` e nunca disparado por evento próprio.
+#
+# Referência: docs/ci-pipeline.md
+
+name: Reusable — Test
+
+# workflow_call é o que torna este arquivo chamável por outro workflow.
+on:
+  workflow_call:
+    inputs:
+      python-version:
+        description: 'Versão do Python para rodar os testes'
+        type: string
+        required: true
+
+jobs:
+  test:
+    name: Test (Python ${{ inputs.python-version }})
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # TODO: mova para cá os steps que estavam no ci.yml. A diferença é que a
+      # versão do Python vem de ${{ inputs.python-version }} em vez de
+      # ${{ matrix.python-version }} — a matrix fica no chamador.
+      #
+      #   - actions/setup-python@v5   com python-version: ${{ inputs.python-version }}
+      #   - actions/cache@v4          para ~/.cache/pip
+      #   - pip install -r requirements.txt && pip install -r requirements-dev.txt
+      #   - pytest -v
+      #   - pip-audit
+
+      # TODO: adicione o scan do Trivy ANTES do pytest. aquasecurity/trivy-action
+      # com scan-type: fs, severity: HIGH,CRITICAL, exit-code: '1' (é o que faz
+      # virar gate) e ignore-unfixed: true. Exportando format: sarif, suba o
+      # resultado com github/codeql-action/upload-sarif — exige
+      # security-events: write nas permissions do ci.yml.
+
+      # Guarda temporária: remova ao completar os TODOs acima.
+      - name: TODO guard
+        run: |
+          echo 'Os steps de teste ainda não foram movidos para este reusable.'
+          exit 1

@@ -1,0 +1,23 @@
+# Template de CODEOWNERS.
+#
+# Renomeie para .github/CODEOWNERS (sem .example) e troque os placeholders pelos
+# usernames reais do time.
+#
+# O que o arquivo faz: quando um PR toca um caminho, o GitHub atribui
+# automaticamente o revisor responsável. Combinado com "Require review from Code
+# Owners" na branch protection, a revisão passa a ser obrigatória.
+#
+# A ORDEM IMPORTA: a última regra que casa é a que vale.
+#
+# Para uma regra de EQUIPE (@org/time) funcionar, o time precisa existir na
+# organização e ter acesso de escrita ao repositório. Em repo pessoal, use
+# usernames individuais.
+
+# Todo o repositório.
+*                       @OWNER @MEMBRO2
+
+# Workflows de CI/CD: quem mexe no pipeline precisa do aval do dono do repo.
+/.github/workflows/     @OWNER
+
+# Manifestos de deploy: mudança de infra o time revisa junto.
+/k8s/                   @OWNER @MEMBRO2 @MEMBRO3

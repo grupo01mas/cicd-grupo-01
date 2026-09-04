@@ -1,0 +1,101 @@
+# ABOUTME: Esqueleto do pipeline de Rolling deployment via kubectl apply por SSH.
+# ABOUTME: Renomeie para cd.yml e complete os TODOs de pin da tag, apply e smoke test.
+#
+# Estratégia: Rolling Update, o padrão do Kubernetes. O `kubectl apply` de um
+# Deployment sobe o pod novo, espera ficar Ready (readinessProbe) e só então
+# remove o antigo.
+#
+# Referência: docs/cd-pipeline.md
+# Pré-requisitos: EC2_SSH_KEY, EC2_HOST, EC2_USER, DOCKERHUB_USERNAME
+# + variable KIND_CLUSTER.
+
+name: Rolling deployment
+
+on:
+  # Deploy manual: quem dispara escolhe qual tag da imagem vai para o cluster.
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: 'Tag da imagem a publicar (Docker Hub)'
+        required: true
+        default: latest
+
+permissions:
+  contents: read
+
+# Centralizados aqui para não repetir string mágica pelos steps.
+env:
+  IMAGE_NAME: app-k8s-todolist
+  NAMESPACE: todolist
+
+jobs:
+  deploy:
+    name: Deploy to kind
+    runs-on: ubuntu-latest
+    steps:
+      # Traz k8s/todolist.yaml para o runner.
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Pin image tag in manifest
+        env:
+          IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ inputs.image_tag }}
+        run: |
+          # TODO: reescreva a linha `image:` de k8s/todolist.yaml para ${IMAGE},
+          # usando sed. Casando a partir de "image:" a indentação do YAML é
+          # preservada:
+          #   sed -i "s#image: .*${IMAGE_NAME}.*#image: ${IMAGE}#" k8s/todolist.yaml
+          #
+          # Depois imprima a linha (grep 'image:') para conferir no log.
+          echo 'TODO: pin da tag'
+          exit 1
+
+      - name: Copy manifest to EC2
+        run: |
+          # TODO: copie o manifesto já ajustado para a home do usuário na EC2,
+          # com scp:
+          #   scp -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=accept-new \
+          #     k8s/todolist.yaml \
+          #     "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:~/todolist.yaml"
+          echo 'TODO: scp do manifesto'
+          exit 1
+
+      - name: Apply and wait for rollout
+        env:
+          KIND_CLUSTER: ${{ vars.KIND_CLUSTER || 'devops-labs' }}
+        run: |
+          # TODO: via SSH, rode no cluster:
+          #   kubectl config use-context "kind-${KIND_CLUSTER}"
+          #   kubectl apply -f ~/todolist.yaml
+          #   kubectl rollout status deployment/todolist -n ${NAMESPACE} --timeout=120s
+          #
+          # Para mandar várias linhas de uma vez, use um heredoc alimentando
+          # `bash -s` do lado remoto:
+          #   ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=accept-new \
+          #     "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" bash -s <<EOF
+          #     set -euo pipefail
+          #     ...
+          #   EOF
+          #
+          # O `rollout status` é o GATE: se o pod novo não fica Ready no prazo,
+          # o step falha e o deploy é reprovado.
+          echo 'TODO: apply + rollout status'
+          exit 1
+
+      - name: Smoke test /healthz
+        run: |
+          # TODO: via SSH, faça curl no /healthz passando o header Host — a
+          # entrada é o ingress-nginx na porta 80 do nó:
+          #   curl -fsS -H "Host: todolist.local" http://localhost/healthz
+          #
+          # Vale um retry: o pod pode levar alguns segundos para responder.
+          # Ex.: for _ in $(seq 1 20); do curl ... && exit 0; sleep 3; done; exit 1
+          echo 'TODO: smoke test via ingress'
+          exit 1

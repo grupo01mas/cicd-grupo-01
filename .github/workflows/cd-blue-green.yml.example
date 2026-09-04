@@ -1,0 +1,97 @@
+# ABOUTME: Esqueleto do pipeline de deploy blue/green: publica a versão num slot de cor.
+# ABOUTME: Renomeie para cd-blue-green.yml e complete os TODOs do deploy no slot.
+#
+# Este workflow publica uma versão no slot da cor escolhida e faz smoke test no
+# host fixo desse slot. NÃO troca o tráfego de produção — isso é papel do
+# cd-blue-green-switch.yml. Duas operações separadas é o blue/green clássico:
+# preparar a versão, e depois decidir fazer o cutover.
+#
+# Referência: docs/cd-pipeline.md
+
+name: CD Blue/Green deploy
+
+# run-name dinâmico: a aba Actions mostra a cor e a tag de cada execução.
+run-name: 'Blue/Green deploy → ${{ inputs.color }} (${{ inputs.image_tag }})'
+
+on:
+  workflow_dispatch:
+    inputs:
+      color:
+        description: 'Slot de cor onde publicar a versão'
+        required: true
+        type: choice
+        options:
+          - blue
+          - green
+        default: blue
+      image_tag:
+        description: 'Tag da imagem a publicar (Docker Hub)'
+        required: true
+        default: latest
+
+permissions:
+  contents: read
+
+env:
+  IMAGE_NAME: app-k8s-todolist
+  NAMESPACE: todolist-bg
+
+jobs:
+  deploy:
+    name: Deploy no slot de cor
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Copy bootstrap manifest to EC2
+        run: |
+          # TODO: copie k8s/blue-green/bootstrap.yaml para a EC2 com scp (mesma
+          # forma do cd.yml), como ~/blue-green-bootstrap.yaml. O manifesto é
+          # aplicado só na primeira execução, pelo step seguinte.
+          echo 'TODO: scp do bootstrap'
+          exit 1
+
+      - name: Deploy no slot e smoke test
+        env:
+          IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ inputs.image_tag }}
+          KIND_CLUSTER: ${{ vars.KIND_CLUSTER || 'devops-labs' }}
+          COLOR: ${{ inputs.color }}
+        run: |
+          # TODO: via SSH (heredoc alimentando bash -s), rode:
+          #
+          # 1. Selecionar o contexto:
+          #      kubectl config use-context "kind-${KIND_CLUSTER}"
+          #
+          # 2. Bootstrap idempotente — na primeira execução o namespace não
+          #    existe, então aplique o manifesto que cria as duas cores, os três
+          #    Services e o Ingress (produção começa em blue):
+          #      if ! kubectl get ns "${NS}" >/dev/null 2>&1; then
+          #        kubectl apply -f ~/blue-green-bootstrap.yaml
+          #      fi
+          #
+          # 3. Avisar (sem falhar) se a cor escolhida já é a de produção — nesse
+          #    caso o deploy vai direto para o tráfego, o que anula a rede de
+          #    proteção do blue/green:
+          #      ACTIVE=$(kubectl get svc todolist -n "${NS}" -o jsonpath='{.spec.selector.color}')
+          #
+          # 4. Publicar a imagem no Deployment da cor e esperar o rollout:
+          #      kubectl set image deployment/todolist-${COLOR} todolist="${IMAGE}" -n "${NS}"
+          #      kubectl rollout status deployment/todolist-${COLOR} -n "${NS}" --timeout=120s
+          #
+          # 5. Smoke test no host FIXO do slot, não no de produção:
+          #      curl -fsS -H "Host: ${COLOR}.todolist-bg.local" http://localhost/healthz
+          #
+          # Lembre de passar as variáveis para o lado remoto, porque o heredoc
+          # roda em outra máquina:
+          #   ssh ... "IMAGE='${IMAGE}' KIND_CLUSTER='${KIND_CLUSTER}' \
+          #            NS='${NAMESPACE}' COLOR='${COLOR}' bash -s" <<'EOF'
+          echo 'TODO: set image + rollout + smoke test no slot'
+          exit 1
