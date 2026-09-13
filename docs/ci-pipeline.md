@@ -208,7 +208,7 @@ diferente amanhã, e você acabou de dar ao mantenedor (ou a quem comprometer a 
 dele) execução de código no seu pipeline com acesso aos seus secrets.
 
 ```yaml
-- uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+- uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 ```
 
 O hash é imutável: você confia num commit específico que foi auditado, não num
