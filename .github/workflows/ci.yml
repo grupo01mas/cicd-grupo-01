@@ -16,9 +16,10 @@ name: CI
 #   - pull_request com branches: [main]
 #   - push com branches: [main]
 on:
-  # TODO: substitua este bloco pelos gatilhos acima.
-  # workflow_dispatch permite disparar na mão enquanto você ainda está montando.
-  workflow_dispatch:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
 
 # Menor privilégio: o GITHUB_TOKEN deste workflow só consegue LER o repositório.
 # Sem este bloco, o token vem com contents: write por padrão.
@@ -27,62 +28,13 @@ permissions:
 
 jobs:
   test:
-    name: Test
-    runs-on: ubuntu-latest
-
-    # TODO: transforme este job numa matrix de três versões do Python (3.10,
-    # 3.11 e 3.12) com fail-fast: false, e troque o name acima por
-    # "Test (Python ${{ matrix.python-version }})".
-    #
-    # strategy:
-    #   fail-fast: false
-    #   matrix:
-    #     python-version: ['3.10', '3.11', '3.12']
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-
-      # TODO: instale o Python com actions/setup-python@v5. Comece fixando
-      # '3.11'; ao introduzir a matrix isso vira ${{ matrix.python-version }}.
-
-      # TODO: adicione o cache de pip com actions/cache@v4.
-      # path: ~/.cache/pip
-      # key:  ${{ runner.os }}-pip-${{ matrix.python-version }}-${{ hashFiles('requirements*.txt') }}
-      # E um restore-keys para aproveitar cache parcial quando as deps mudam.
-
-      # TODO: instale as dependências.
-      #   pip install -r requirements.txt
-      #   pip install -r requirements-dev.txt
-
-      # TODO: rode os testes.
-      #   pytest -v
-
-      # TODO: o gate de segurança (shift-left). pip-audit consulta a base de CVEs
-      # do PyPI/OSV e falha o job quando acha vulnerabilidade com correção
-      # disponível.
-      #   pip-audit
-
-      # Guarda temporária: um job só com checkout passaria verde sem testar nada,
-      # e CI que passa à toa é pior que CI que falha. Remova este step ao
-      # completar os TODOs acima.
-      - name: TODO guard
-        run: |
-          echo 'Os steps do job test ainda não foram implementados.'
-          exit 1
-
-  # TODO: extraia os steps de teste para .github/workflows/_reusable-test.yml e
-  # troque o job test acima por uma chamada ao reusable. O job fica assim (sem
-  # runs-on, sem steps):
-  #
-  #   test:
-  #     strategy:
-  #       fail-fast: false
-  #       matrix:
-  #         python-version: ['3.10', '3.11', '3.12']
-  #     uses: ./.github/workflows/_reusable-test.yml
-  #     with:
-  #       python-version: ${{ matrix.python-version }}
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.11', '3.12']
+    uses: ./.github/workflows/_reusable-test.yml
+    with:
+      python-version: ${{ matrix.python-version }}
 
   # TODO: job deploy-staging que reivindica o environment staging (required
   # reviewer pausa o job até alguém aprovar). Só roda em push na main, não em PR:
