@@ -1,0 +1,5 @@
+# Dono padrão de todo o repositório (membros com permissão de escrita)
+*       @cicerooant @ErisonSantiago @mviniciusalves
+
+# Dono específico dos workflows de CI/CD (Pessoa 3 - Segurança)
+/.github/workflows/   @cicerooant
