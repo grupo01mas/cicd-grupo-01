@@ -286,3 +286,4 @@ vira prioridade sobre qualquer feature.
 > `t3.small` custa ~US$ 0,023/h, então o crédito do Learner Lab tem folga enorme. O
 > motivo do teardown é higiene e disciplina de FinOps, não risco de estourar o
 > crédito. Instância esquecida ligada é o clássico da vida real.
+<!-- teste de branch protection -->
