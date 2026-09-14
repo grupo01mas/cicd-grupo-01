@@ -393,7 +393,7 @@ No exercício foram observadas as seguintes vulnerabilidades:
 | PYSEC-2026-1872 | requests    |            2.31.0 |         2.32.4 |
 | PYSEC-2026-2275 | requests    |            2.31.0 |         2.33.0 |
 
-**O PR #4** ficou com o merge **bloqueado** pela branch protection: os required
+**O PR #6** ficou com o merge **bloqueado** pela branch protection: os required
 status checks `Test (Python 3.11)` e `Test (Python 3.12)` ficaram vermelhos por
 causa do `pip-audit`.
 
