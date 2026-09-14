@@ -4,28 +4,34 @@ Referência do pipeline de CI: `.github/workflows/ci.yml` e o reusable
 `.github/workflows/_reusable-test.yml`.
 
 O objetivo do CI é ser um conjunto de **quality gates** que bloqueiam o merge
-quando lint, testes ou scans de segurança falham — e publicar a imagem no Docker
-Hub quando tudo passa.
+quando lint, testes ou scans de segurança falham.
 
-> Este doc explica **o que cada peça faz e por quê**. Os esqueletos comentados,
-> com os TODOs na ordem de construção, estão em `.github/workflows/*.yml.example`.
+> **Status:** pipeline de CI implementado e ativo na `main`. Branch protection
+> configurada com required status checks e Code Owners. O repositório é público,
+> portanto as regras de proteção são aplicadas de verdade.
+>
+> Os arquivos `.yml.example` permanecem como material didático para demonstrar
+> a evolução e a ordem de construção dos workflows.
 
 ---
 
 ## As peças
 
-| Peça | Papel |
-|---|---|
-| Gatilhos em `pull_request` e `push` na `main` | Faz o pipeline ser gate de merge |
-| Job de teste com `pytest` | Prova que a app funciona |
-| `pip-audit` | Gate de CVE nas dependências |
-| Matrix de Python + cache de pip | Cobertura de versões e feedback rápido |
-| Reusable workflow (`workflow_call`) | DRY: uma definição de teste, vários chamadores |
-| Environment com required reviewer | Aprovação humana antes de um passo sensível |
-| `permissions:` mínimo + pinning por SHA | Reduz o raio de dano do pipeline |
-| Trivy | Gate de CVE na imagem e no filesystem |
-| Notificação por webhook | O pipeline conversa com o time |
-| Build e push no Docker Hub | Entrega o artefato versionado |
+| Peça                                       | Papel                                          | Status         |
+| ------------------------------------------ | ---------------------------------------------- | -------------- |
+| Gatilhos `pull_request` e `push` na `main` | Faz o pipeline ser gate de merge               | ✅ Implementado |
+| Job de teste com `pytest`                  | Prova que a aplicação funciona                 | ✅ Implementado |
+| `ruff`                                     | Gate de qualidade e lint                       | ✅ Implementado |
+| `pip-audit`                                | Gate de vulnerabilidades nas dependências      | ✅ Implementado |
+| Matrix de Python + cache de pip            | Cobertura de versões e feedback rápido         | ✅ Implementado |
+| Reusable workflow (`workflow_call`)        | DRY: uma definição de teste, vários chamadores | ✅ Implementado |
+| `permissions:` mínimo + pinning por SHA    | Reduz o raio de dano do pipeline               | ✅ Implementado |
+| Branch protection com required checks      | Bloqueia merge com CI vermelho                 | ✅ Configurada  |
+| Code Owners                                | Exige revisão dos responsáveis pelo código     | ✅ Configurado  |
+| Environment com required reviewer          | Aprovação humana antes de passo sensível       | ⏳ Roadmap (CD) |
+| Trivy                                      | Gate de CVE na imagem e no filesystem          | ⏳ Roadmap (CD) |
+| Notificação por webhook                    | O pipeline conversa com o time                 | ⏳ Roadmap (CD) |
+| Build e push no Docker Hub                 | Entrega o artefato versionado                  | ⏳ Roadmap (CD) |
 
 ---
 
@@ -39,13 +45,25 @@ on:
     branches: [main]
 ```
 
-- **`pull_request` para `main`** — roda em toda proposta de merge. É o gatilho que
-  faz o CI ser um gate de verdade.
-- **`push` para `main`** — roda quando algo entra na branch principal, mantendo o
-  badge do README honesto sobre a saúde da `main`.
+* **`pull_request` para `main`** — roda em toda proposta de merge. É o gatilho
+  que faz o CI ser um gate de verdade.
 
-Uma extensão comum é `tags: ['*']` no `push`, para publicar imagem versionada
-quando uma tag é criada.
+* **`push` para `main`** — roda quando algo entra na branch principal, mantendo
+  o estado da `main` visível.
+
+Uma extensão comum para a etapa de CD é adicionar:
+
+```yaml
+on:
+  push:
+    tags: ['*']
+```
+
+Isso permite executar etapas específicas de publicação quando uma tag de versão
+é criada.
+
+> Essa publicação por tag não faz parte do CI atual e permanece como evolução
+> planejada do pipeline de CD.
 
 ---
 
@@ -56,21 +74,28 @@ permissions:
   contents: read
 ```
 
-Sem bloco `permissions:` explícito, o `GITHUB_TOKEN` do workflow vem com
-`contents: write` (ou mais). Um workflow comprometido — via action de terceiro
-maliciosa, por exemplo — poderia escrever no repositório, criar releases, apagar
-coisas.
+Sem um bloco `permissions:` explícito, o `GITHUB_TOKEN` pode receber permissões
+maiores do que o workflow realmente precisa.
 
-Declarar só o que o workflow realmente precisa é a mitigação. Jobs específicos
-podem pedir mais que o padrão do workflow:
+Um workflow comprometido — por exemplo, por meio de uma action de terceiro
+maliciosa — poderia utilizar essas permissões para modificar recursos do
+repositório.
+
+Declarar apenas as permissões necessárias reduz esse risco.
+
+Jobs específicos podem solicitar permissões adicionais quando necessário:
 
 ```yaml
-  jobs:
-    algum-job:
-      permissions:
-        contents: read
-        security-events: write     # necessário para upload de SARIF (Trivy)
+jobs:
+  algum-job:
+    permissions:
+      contents: read
+      security-events: write
 ```
+
+A permissão `security-events: write`, por exemplo, será necessária em uma futura
+etapa que utilize o Trivy e envie resultados em formato SARIF para o GitHub Code
+Scanning.
 
 ---
 
@@ -78,71 +103,129 @@ podem pedir mais que o padrão do workflow:
 
 ### Lint (`ruff`)
 
-Roda `ruff check .` — estilo, ordenação de imports e padrões conhecidos de bug. A
-configuração vive em `pyproject.toml`, então o mesmo comando dá o mesmo resultado
-na sua máquina e no CI.
+O lint executa:
+
+```bash
+ruff check .
+```
+
+O `ruff` verifica problemas de estilo, imports e diversos padrões conhecidos de
+erro.
+
+A configuração fica centralizada no `pyproject.toml`, fazendo com que o mesmo
+comando produza resultados consistentes localmente e no CI.
+
+Se o lint falhar, o pipeline fica vermelho e o merge pode ser bloqueado pela
+branch protection.
+
+---
 
 ### Test (`pytest`) com matrix e cache
 
-**Matrix** cria uma execução paralela do job por versão do Python:
+O job de testes utiliza uma **matrix** para executar os testes nas versões de
+Python suportadas pelo projeto:
 
 ```yaml
 strategy:
   fail-fast: false
   matrix:
-    python-version: ['3.10', '3.11', '3.12']
+    python-version: ['3.11', '3.12']
 ```
 
-- Prova que a app funciona em **todas** as versões suportadas, não só na sua.
-- `fail-fast: false` é importante: se a 3.10 quebra, as outras **continuam**
-  rodando. Você descobre se o problema é de uma versão só ou de todas, em uma
-  execução em vez de três.
+A matrix cria uma execução independente para cada versão.
 
-**Cache** de dependências com `actions/cache`, sobre `~/.cache/pip`. A chave
-inclui o hash de `requirements*.txt`:
+Isso permite verificar se a aplicação funciona em:
 
-- chave **igual** à anterior → cache hit, restaura tudo
-- chave **diferente** → miss, mas `restore-keys` recupera um cache próximo e
-  aproveita parte da instalação
+* Python 3.11
+* Python 3.12
 
-Não é sobre economizar minutos de máquina: é sobre **feedback rápido no PR**.
+O `fail-fast: false` é importante porque, se o Python 3.11 falhar, o Python 3.12
+**continua executando**.
+
+Assim é possível identificar se o problema está restrito a uma versão ou se
+afeta todas as versões testadas.
+
+### Cache
+
+As dependências são armazenadas em cache utilizando o diretório:
+
+```text
+~/.cache/pip
+```
+
+A chave do cache considera o conteúdo dos arquivos de requirements.
+
+Quando a chave é igual à utilizada anteriormente, ocorre um **cache hit**.
+
+Quando as dependências mudam, ocorre um **cache miss**, mas o `restore-keys`
+pode recuperar um cache próximo e reaproveitar parte dos arquivos existentes.
+
+O objetivo principal não é apenas economizar minutos de processamento, mas
+reduzir o tempo de feedback durante o desenvolvimento e nos Pull Requests.
+
+---
 
 ### Dependency audit (`pip-audit`)
 
-Consulta a base de advisories do Python (PyPI/OSV) e falha quando uma dependência
-tem CVE conhecido **com correção disponível**.
+O `pip-audit` verifica as dependências Python do projeto contra bases de
+vulnerabilidades conhecidas.
 
-É o gate do [exercício de shift-left](#o-exercício-de-shift-left): o
-`requirements.txt` deste kit vem **limpo**, e a falha é introduzida de propósito.
+O comando utilizado localmente é:
 
-### Container scan (`trivy`)
+```bash
+pip-audit -r requirements.txt
+```
 
-O Trivy enxerga mais que o `pip-audit`: além das bibliotecas Python, ele cobre os
-pacotes do **sistema operacional base** da imagem.
+Quando uma dependência possui uma vulnerabilidade conhecida com correção
+disponível, o job falha.
 
-Configurações que importam:
+Esse é um dos principais gates de **shift-left security** do pipeline.
 
-| Campo | Efeito |
-|---|---|
-| `scan-type: fs` | Escaneia arquivos e manifestos, sem precisar buildar a imagem |
-| `severity: HIGH,CRITICAL` | Só reporta o que dá para agir |
-| `exit-code: '1'` | **Transforma o scan em gate** — sem isso ele só informa |
-| `ignore-unfixed: true` | Ignora CVE sem patch disponível, evitando build eternamente vermelho |
-| `format: sarif` | Formato que alimenta a aba **Security → Code scanning** |
+O objetivo é detectar uma dependência vulnerável **antes do merge**, e não depois
+que o código já chegou a um ambiente de execução.
 
-Subir o SARIF com `github/codeql-action/upload-sarif` exige
-`security-events: write` nas permissions.
+---
 
-> Escaneando a imagem inteira, o Trivy também pega CVEs das ferramentas de
-> empacotamento que vêm na base image (`pip`, `setuptools`, `wheel`). É por isso
-> que o `Dockerfile` deste kit atualiza as três antes de instalar as dependências.
+## Container scan (`Trivy`) — roadmap
+
+O Trivy **ainda não faz parte do CI implementado**. Ele permanece planejado para
+a etapa de CD.
+
+A intenção é utilizá-lo para verificar vulnerabilidades tanto nos arquivos da
+aplicação quanto na imagem de container.
+
+O Trivy complementará o `pip-audit`, pois poderá detectar vulnerabilidades que não
+estão relacionadas exclusivamente às bibliotecas Python, incluindo componentes
+do sistema operacional presentes na imagem base.
+
+Configurações planejadas:
+
+| Campo                     | Efeito                                                       |
+| ------------------------- | ------------------------------------------------------------ |
+| `scan-type: fs`           | Escaneia arquivos e manifestos sem precisar buildar a imagem |
+| `severity: HIGH,CRITICAL` | Concentra o gate nas vulnerabilidades mais relevantes        |
+| `exit-code: '1'`          | Transforma o resultado do scan em um gate                    |
+| `ignore-unfixed: true`    | Ignora vulnerabilidades sem correção disponível              |
+| `format: sarif`           | Permite integração com o Code Scanning do GitHub             |
+
+Quando implementado com upload de SARIF, o job precisará de:
+
+```yaml
+permissions:
+  contents: read
+  security-events: write
+```
+
+> O Trivy também poderá identificar vulnerabilidades em componentes da imagem
+> base, além das bibliotecas Python. Por isso, a etapa de container scanning
+> complementará o `pip-audit`, em vez de substituí-lo.
 
 ---
 
 ## Reusable workflow: o DRY do YAML
 
-Em vez de repetir os steps de teste, o job `test` **delega** para um workflow
-reutilizável do próprio repositório:
+Em vez de repetir os steps de teste, o job `test` delega a execução para um
+workflow reutilizável:
 
 ```yaml
 jobs:
@@ -150,233 +233,602 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ['3.10', '3.11', '3.12']
+        python-version: ['3.11', '3.12']
     uses: ./.github/workflows/_reusable-test.yml
     with:
       python-version: ${{ matrix.python-version }}
 ```
 
-A divisão de responsabilidade: **a matrix vive no chamador, a lógica de teste vive
-no reusable**. Trocar as versões testadas não toca nos steps; mudar os steps não
-toca nas versões.
+A divisão de responsabilidade é:
 
-Dois cuidados que costumam pegar:
+**Chamador:**
 
-- Ao chamar um reusable, o job chamador **não** tem `runs-on` nem `steps`. Quem
-  executa steps é o reusable.
-- Os **nomes dos checks mudam** ao refatorar. Isso quebra os required checks já
-  configurados na branch protection: rode o CI uma vez para os novos nomes
-  aparecerem na lista e remarque-os. Esquecer disso deixa o merge liberado com
-  teste falhando.
+* define a matrix;
+* define quais versões de Python serão testadas.
 
-Convenção: o prefixo `_` sinaliza workflow de apoio, chamado por outros e não
-disparado por evento próprio.
+**Reusable workflow:**
+
+* configura o ambiente;
+* instala as dependências;
+* executa os testes;
+* executa os passos compartilhados do processo de validação.
+
+Isso evita duplicação.
+
+Trocar as versões testadas não exige modificar os steps internos do teste.
+Da mesma forma, alterar os steps do teste não exige modificar a matrix.
+
+### Cuidados com reusable workflows
+
+Ao chamar um reusable workflow, o job chamador não possui `runs-on` nem `steps`.
+A execução dos steps pertence ao workflow reutilizável.
+
+Outro ponto importante é que os **nomes dos checks podem mudar** quando um workflow
+é refatorado.
+
+Isso pode afetar os required status checks configurados na branch protection.
+
+Por isso, depois de alterar o nome ou a estrutura dos jobs:
+
+1. execute o workflow pelo menos uma vez;
+2. aguarde os novos checks aparecerem no GitHub;
+3. confirme os nomes na branch protection;
+4. marque os checks corretos como obrigatórios.
+
+A convenção de iniciar o nome do reusable com `_` indica que ele é um workflow
+de apoio, utilizado por outros workflows.
 
 ---
 
-## Environment com required reviewer
+## Environment com required reviewer — roadmap
 
-Um environment é um objeto do repositório que agrupa secrets, variables e
-**políticas de proteção**: required reviewers, wait timer, branches permitidas.
+Um Environment é um objeto do repositório que pode agrupar:
 
-Um job reivindica o environment e as políticas entram em cena:
+* secrets;
+* variables;
+* required reviewers;
+* wait timers;
+* regras de branch.
+
+A ideia para o CD é utilizar um environment chamado `staging`.
+
+Um futuro job poderá ser semelhante a:
 
 ```yaml
-  deploy-staging:
-    needs: test
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    environment:
-      name: staging
+deploy-staging:
+  needs: test
+  if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+  environment:
+    name: staging
 ```
 
-Com **required reviewer** configurado, o job aparece como *Waiting* e pausa até
-alguém aprovar em **Review deployments**. A aprovação fica registrada no histórico
-de deployments do repositório — auditoria de graça.
+Com um required reviewer configurado, o job ficará aguardando aprovação antes
+de executar o passo protegido.
 
-O `if:` restringe a push na `main`: não faz sentido "deployar" a cada PR.
+A aprovação ficará registrada no histórico de deployments do GitHub, fornecendo
+rastreabilidade para a operação.
 
-Secrets cadastrados **dentro** do environment (**Settings → Environments →
-staging → Add secret**) só existem para jobs que reivindicam aquele environment.
-É a diferença entre secret de repositório e secret com escopo de ambiente.
+O `if:` restringe o deployment para pushes na `main`, evitando que cada Pull
+Request tente executar um deploy.
+
+> O Environment com required reviewer faz parte do **roadmap de CD** e não deve
+> ser considerado um recurso já implementado no CI atual.
 
 ---
 
 ## Pinning de actions por SHA
 
-Tags e branches de actions são **mutáveis**. `@v4` hoje pode apontar para um commit
-diferente amanhã, e você acabou de dar ao mantenedor (ou a quem comprometer a conta
-dele) execução de código no seu pipeline com acesso aos seus secrets.
+Tags e branches de GitHub Actions são mutáveis.
+
+Por exemplo:
 
 ```yaml
-- uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+uses: actions/checkout@v4
 ```
 
-O hash é imutável: você confia num commit específico que foi auditado, não num
-nome. O comentário com a versão mantém a linha legível.
+não identifica diretamente um commit imutável.
 
-Estratégia prática:
+Para aumentar a segurança da cadeia de CI, as actions utilizadas pelo pipeline
+são fixadas por SHA.
 
-- Actions de **terceiros**: sempre pin por SHA
-- Actions **oficiais** do GitHub (`actions/*`): pin nas críticas
-- **Renovate/Dependabot** cuidam de atualizar os pins, então isso não vira
-  manutenção manual
-
-O SHA completo aparece na página da release da action, ao lado da tag.
-
----
-
-## Notificações
-
-CI roda em background e ninguém fica olhando dashboard. Falha na `main` é
-incidente que precisa de dono rápido.
-
-O job de notificação usa `if: always()` — precisa rodar **justamente quando algo
-falhou antes**, então não pode depender do sucesso dos jobs anteriores. Ele lê o
-resultado dos outros jobs via `needs.<job>.result`, compõe a mensagem e faz `curl`
-no webhook (secret `NOTIFY_WEBHOOK_URL`).
-
-Sempre inclua o **link do run** na mensagem: notificação que não leva ao log gera
-mais pergunta que resposta.
-
-> Regra de dosagem: notifique o suficiente para acionar, não a ponto de virar
-> ruído que todo mundo aprende a ignorar.
-
----
-
-## Publicação da imagem no Docker Hub
-
-Único job que **não** roda em paralelo: ele depende de todos os gates.
+Pins utilizados:
 
 ```yaml
-needs: [lint, test, dependency-audit, container-scan, sast]
+- uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+- uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+- uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
 ```
 
-Nunca publicamos imagem que não passou pelos scans. Se qualquer gate falha, o push
-nem é tentado.
+O SHA identifica um commit específico.
 
-### Regras de tag
+Assim, o workflow não passa a executar automaticamente uma versão diferente da
+action apenas porque uma tag foi movida.
 
-| Evento | Tag principal | Exemplo |
-|---|---|---|
-| Pull request para `main` | `PR-<número>` | `PR-42` |
-| Push na `main` | `latest` | `latest` |
-| Criação de tag | a tag exata | `v1.2.0` |
+O comentário com a versão mantém o arquivo legível e facilita futuras
+atualizações.
 
-Além da principal, **toda** imagem recebe uma segunda tag com o hash curto do
-commit (`${GITHUB_SHA::7}`). É o que dá rastreabilidade exata: dado um pod
-rodando, você sabe de qual commit ele veio.
+### Estratégia prática
 
-### O rodapé com as tags
+* Actions de terceiros: preferencialmente pinadas por SHA.
+* Actions oficiais do GitHub (`actions/*`): também podem ser pinadas por SHA,
+  especialmente em etapas críticas.
+* Dependabot ou Renovate podem ser utilizados para auxiliar na atualização dos
+  pins.
 
-O conjunto de tags também vai como build-arg `IMAGE_TAGS`, e a app mostra a parte
-curta de cada uma no rodapé, sob `version:`. Builds locais, sem o build-arg, não
-mostram rodapé nenhum.
-
-Serve para conectar "o que o pipeline fez" com "o que o usuário vê": o rodapé diz
-exatamente qual build está rodando naquele pod.
-
----
-
-## Secrets e variables
-
-Cadastrados em **Settings → Secrets and variables → Actions**.
-
-| Nome | Tipo | Para quê |
-|---|---|---|
-| `DOCKERHUB_USERNAME` | secret | Usuário/organização no Docker Hub. Compõe o nome da imagem: `<usuário>/app-k8s-todolist` |
-| `DOCKERHUB_TOKEN` | secret | Access token do Docker Hub (**nunca** a senha da conta) |
-| `NOTIFY_WEBHOOK_URL` | secret | Webhook do canal Slack/Discord do time |
-| `STAGING_URL` | secret | Valor dummy, cadastrado **dentro** do environment `staging` |
-
-O access token sai em **Docker Hub → Account settings → Personal access tokens →
-Generate new token**, com permissão *Read, Write, Delete*. Ele aparece **uma única
-vez**. Token é revogável e escopado; a senha da conta não — se o token vazar você
-revoga um token, se a senha vazar você perde a conta.
-
-> Webhook de Slack/Discord é um bearer token: quem tem a URL posta no canal.
-> Nunca commite valor de secret, nem em comentário nem em arquivo de exemplo — um
-> secret no histórico do Git continua lá depois de "apagado".
-
-Os secrets do canal de deploy (`EC2_*`, `KIND_CLUSTER`) estão em
-[cd-pipeline.md](cd-pipeline.md).
+> A manutenção dos pins deve considerar a evolução das versões das actions e dos
+> runtimes utilizados pelo GitHub Actions.
 
 ---
 
 ## O exercício de shift-left
 
-O `requirements.txt` deste kit vem **limpo** de propósito: o pipeline fica verde na
-primeira execução. A falha é introduzida deliberadamente, para você ver o gate agir.
+O `requirements.txt` utilizado no exercício começa limpo de propósito.
 
-**1. Quebrar** — numa branch nova, rebaixe o `requests` e abra um PR:
+A vulnerabilidade é introduzida deliberadamente para demonstrar o funcionamento
+do gate de segurança.
+
+### 1. Quebrar
+
+Em uma branch nova, rebaixe o `requests`:
 
 ```diff
 - requests==2.33.0
 + requests==2.31.0
 ```
 
-**2. Observar** — `pip-audit` e Trivy ficam vermelhos, apontando os CVEs
-(CVE-2024-35195, CVE-2024-47081, CVE-2026-25645) e as versões que corrigem. Lint e
-testes seguem verdes: o problema está isolado na dependência. Com branch
-protection ativa, o merge fica **bloqueado**.
+Depois, abra um Pull Request para `main`.
 
-**3. Corrigir** — na **mesma branch**, volte para a versão corrigida:
+---
+
+### 2. Observar
+
+O `pip-audit` identifica vulnerabilidades relacionadas à versão vulnerável do
+`requests`.
+
+No exercício foram observadas as seguintes vulnerabilidades:
+
+| Identificador   | Dependência | Versão vulnerável | Fix disponível |
+| --------------- | ----------- | ----------------: | -------------: |
+| PYSEC-2026-1873 | requests    |            2.31.0 |         2.32.0 |
+| PYSEC-2026-1872 | requests    |            2.31.0 |         2.32.4 |
+| PYSEC-2026-2275 | requests    |            2.31.0 |         2.33.0 |
+
+**O PR #4** ficou com o merge **bloqueado** pela branch protection: os required
+status checks `Test (Python 3.11)` e `Test (Python 3.12)` ficaram vermelhos por
+causa do `pip-audit`.
+
+Lint e testes unitários seguem independentes desse problema, permitindo
+identificar que a falha estava relacionada à dependência vulnerável.
+
+---
+
+### 3. Corrigir
+
+Na mesma branch, atualize novamente para a versão corrigida:
 
 ```diff
 - requests==2.31.0
 + requests==2.33.0
 ```
 
-> A correção precisa ser **2.33.0**. Bumpar só para `2.32.x` **não** zera todos os
-> CVEs — bom lembrete de que "atualizar um pouco" nem sempre basta.
+Depois faça commit e push.
 
-O ponto: o problema foi pego **no PR, antes do merge**, sem ninguém rodar a app e
-sem chegar a produção. Custo do fix: 1x. Isso é shift-left, e não é sorte — é
-desenho de pipeline.
+O CI será executado novamente.
 
-Para demonstrar o gate de testes, quebre uma asserção de propósito em
-`test_app.py` e observe o job `Test` vermelho nas três versões do Python.
+Com a dependência corrigida, o `pip-audit` volta a passar e os required status
+checks podem ficar verdes.
+
+> A versão utilizada na correção do exercício é `2.33.0`. O objetivo é
+> demonstrar que uma atualização precisa considerar todas as vulnerabilidades
+> encontradas, e não apenas a primeira correção disponível.
+
+O ponto central do exercício é que o problema foi detectado **no Pull Request,
+antes do merge**, sem depender de uma execução manual da aplicação em produção.
+
+Isso é **shift-left security** aplicado ao pipeline.
 
 ---
 
-## Sem branch protection, o pipeline é teatro
+### Demonstração do gate de testes
 
-Um CI vermelho que não impede o merge não é gate, é decoração. Em
-**Settings → Branches → Add branch ruleset** para `main`:
+Também é possível demonstrar o funcionamento do gate de testes alterando
+deliberadamente uma asserção em `test_app.py`.
 
-1. **Require a pull request before merging** — ninguém commita direto na `main`
-2. **Require review from Code Owners** — ativa o efeito do `CODEOWNERS`
-3. **Require status checks to pass** — marque os checks do CI como obrigatórios.
-   **É este item que bloqueia o merge**
-4. **Require branches to be up to date before merging** — força integrar a `main`
-   antes de mergear
-5. **Do not allow bypassing the above settings** — vale para o owner também
+Quando a asserção falhar, o job `Test` ficará vermelho nas versões de Python
+afetadas.
 
-> Os status checks só aparecem na lista depois de rodarem **pelo menos uma vez**.
-> Se a lista estiver vazia, abra um PR, deixe o CI rodar e volte para marcá-los.
+Com os required status checks ativos, o GitHub impede o merge enquanto o teste
+não voltar a passar.
+
+---
+
+## Branch protection
+
+A branch `main` possui regras de proteção configuradas em:
+
+**Settings → Branches → Add branch protection rule**
+
+As regras configuradas são:
+
+1. **Require a pull request before merging**
+
+   Impede que alterações sejam inseridas diretamente na `main`.
+
+2. **Require approvals: 1**
+
+   Exige pelo menos uma aprovação antes do merge.
+
+3. **Dismiss stale pull request approvals when new commits are pushed**
+
+   Uma nova alteração enviada ao Pull Request invalida a aprovação anterior,
+   exigindo nova revisão quando aplicável.
+
+4. **Require review from Code Owners**
+
+   Ativa a exigência de revisão pelos responsáveis definidos no `CODEOWNERS`.
+
+5. **Require status checks to pass before merging**
+
+   Os checks do CI precisam estar verdes antes do merge.
+
+   Checks obrigatórios configurados:
+
+   * `Test (Python 3.11)`
+   * `Test (Python 3.12)`
+
+6. **Require branches to be up to date before merging**
+
+   Exige que a branch do Pull Request esteja atualizada em relação à `main`
+   antes do merge.
+
+7. **Require conversation resolution before merging**
+
+   Conversas de revisão precisam ser resolvidas.
+
+8. **Do not allow bypassing the above settings**
+
+   As regras também se aplicam a administradores/owners, evitando que a proteção
+   seja simplesmente ignorada.
+
+> Os status checks somente aparecem na lista de required checks depois que já
+> executaram pelo menos uma vez. Caso a lista esteja vazia, abra um Pull Request,
+> aguarde o CI executar e depois volte às configurações da branch protection.
+
+### Validação
+
+Foi realizado um Pull Request de teste (**PR #3**) com alteração no `README.md`.
+
+Mesmo com os checks verdes, o GitHub bloqueou o merge enquanto a revisão
+obrigatória não havia sido realizada.
+
+Também foi possível observar o bloqueio enquanto os checks obrigatórios estavam
+em execução.
+
+Após a revisão necessária e a conclusão dos checks, o merge foi liberado.
+
+Esse teste valida empiricamente que a branch protection está funcionando como
+**quality gate**, e não apenas registrada como configuração.
 
 ---
 
 ## Rodando os gates localmente
 
-Os mesmos comandos que o CI executa, na sua máquina:
+Os mesmos comandos utilizados pelo CI podem ser executados localmente:
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
+
 pip install -r requirements-dev.txt
 
-ruff check .                    # lint
-pytest -q                       # testes
-pip-audit -r requirements.txt   # audit de dependências
+ruff check .
+pytest -q
+pip-audit -r requirements.txt
 ```
 
-Rodar local antes de abrir PR economiza minutos de fila. Mesmo comando, mesmo
-resultado.
+No Windows PowerShell, a ativação pode ser feita com:
+
+```powershell
+.venv\Scripts\Activate.ps1
+```
+
+Executar os gates localmente antes de abrir um Pull Request reduz o tempo de
+feedback.
+
+A ideia é manter o mesmo processo:
+
+**desenvolvimento → validação local → Pull Request → CI → review → merge**
+
+---
+
+## Notificações — roadmap
+
+Notificações por webhook ainda **não estão implementadas no CI atual**.
+
+A ideia para o CD é permitir que uma falha relevante seja comunicada
+automaticamente ao time.
+
+O futuro job de notificação deverá utilizar:
+
+```yaml
+if: always()
+```
+
+Isso é importante porque a notificação precisa ser executada mesmo quando um job
+anterior falhar.
+
+O job poderá consultar resultados como:
+
+```text
+needs.<job>.result
+```
+
+e montar uma mensagem contendo:
+
+* status do pipeline;
+* job que falhou;
+* branch;
+* commit;
+* Pull Request, quando aplicável;
+* link direto para o run do GitHub Actions.
+
+O link do run é especialmente importante porque permite que quem recebe a
+notificação vá diretamente para os logs.
+
+> Notificar o suficiente para acionar uma ação, mas não a ponto de gerar ruído
+> que faça o time ignorar os alertas.
+
+---
+
+## Publicação da imagem no Docker Hub — roadmap
+
+A publicação automática da imagem Docker ainda **não faz parte do CI atual**.
+
+Ela será implementada na etapa de CD.
+
+A ideia é que o job de publicação seja executado somente depois que os quality
+gates forem aprovados.
+
+O desenho planejado será semelhante a:
+
+```yaml
+needs:
+  - lint
+  - test
+  - dependency-audit
+  - container-scan
+  - sast
+```
+
+O `build`/`push` somente deverá ocorrer depois que todos os gates necessários
+estiverem verdes.
+
+Dessa forma:
+
+> Nunca publicar uma imagem que não passou pelos controles de qualidade e
+> segurança definidos pelo pipeline.
+
+### Regras de tag planejadas
+
+| Evento                   | Tag principal | Exemplo  |
+| ------------------------ | ------------- | -------- |
+| Pull Request para `main` | `PR-<número>` | `PR-42`  |
+| Push na `main`           | `latest`      | `latest` |
+| Criação de tag           | Tag exata     | `v1.2.0` |
+
+Além da tag principal, cada imagem deverá receber uma segunda tag contendo o hash
+curto do commit:
+
+```text
+${GITHUB_SHA::7}
+```
+
+Isso fornece rastreabilidade entre a imagem e o commit que a originou.
+
+Por exemplo:
+
+```text
+latest
+a1b2c3d
+```
+
+permite identificar tanto a finalidade da imagem quanto o commit exato associado
+ao build.
+
+> A publicação no Docker Hub, as regras de tag e o scan da imagem são
+> **roadmap de CD**, não funcionalidades do CI atualmente implementado.
+
+---
+
+## Rodapé com informações da imagem — roadmap
+
+Uma evolução planejada é passar as tags da imagem para a aplicação através de
+um build argument:
+
+```text
+IMAGE_TAGS
+```
+
+A aplicação poderá então exibir no rodapé a versão/build atualmente em execução.
+
+O objetivo é conectar:
+
+> **o que o pipeline construiu**
+
+com:
+
+> **o que o usuário está utilizando**
+
+Dessa forma, diante de uma aplicação em execução, será possível identificar
+rapidamente qual build está sendo utilizado.
+
+Essa funcionalidade permanece como parte do roadmap de containerização/CD.
+
+---
+
+## Secrets e variables
+
+Os secrets e variables utilizados pelo CI/CD são cadastrados em:
+
+**Settings → Secrets and variables → Actions**
+
+Os valores sensíveis não devem ser armazenados diretamente no repositório.
+
+### Secrets planejados para CI/CD
+
+| Nome                 | Tipo                  | Para quê                                               |
+| -------------------- | --------------------- | ------------------------------------------------------ |
+| `DOCKERHUB_USERNAME` | Secret                | Usuário/organização do Docker Hub                      |
+| `DOCKERHUB_TOKEN`    | Secret                | Access token utilizado para autenticação no Docker Hub |
+| `NOTIFY_WEBHOOK_URL` | Secret                | Webhook para notificações do pipeline                  |
+| `STAGING_URL`        | Secret de Environment | URL utilizada pelo ambiente `staging`                  |
+
+Os secrets relacionados ao canal de deploy, como:
+
+```text
+EC2_*
+KIND_CLUSTER
+```
+
+ficam documentados no `cd-pipeline.md`.
+
+### Docker Hub token
+
+Quando o Docker Hub for integrado ao CD, deverá ser utilizado um **Personal
+Access Token**, e não a senha da conta.
+
+O token deve possuir apenas as permissões necessárias para a operação.
+
+Um token pode ser revogado individualmente caso seja comprometido, reduzindo o
+impacto em comparação com a exposição da senha da conta.
+
+### Webhooks
+
+Webhooks de Slack/Discord funcionam como credenciais.
+
+Quem possuir a URL poderá utilizá-la para publicar mensagens no canal associado.
+
+Por isso:
+
+* nunca commite o valor do webhook;
+* nunca coloque o valor real em comentários;
+* nunca coloque o valor real em arquivos de exemplo;
+* não exponha secrets nos logs.
+
+Mesmo depois que um secret é removido de um arquivo, ele pode continuar presente
+no histórico do Git.
 
 ---
 
 ## Relação com o CD
 
-O CI publica a imagem; o [CD](cd-pipeline.md) leva uma tag publicada para o
-cluster. O gancho entre os dois é **manual**: você dispara o CD escolhendo a tag.
-Disparo automático (`on: workflow_run`) está no roadmap do doc de CD.
+O CI é responsável por validar o código e, futuramente, participar da construção
+do artefato.
+
+O CD será responsável por levar uma imagem publicada para o ambiente de execução.
+
+O fluxo planejado é:
+
+```text
+Pull Request
+     │
+     ▼
+   CI
+     │
+     ├── Lint
+     ├── Test
+     └── Dependency Audit
+             │
+             ▼
+       Branch Protection
+             │
+             ▼
+           Merge
+             │
+             ▼
+            CD
+             │
+             ├── Build
+             ├── Trivy
+             ├── Docker Hub
+             └── Deploy
+```
+
+Atualmente, o fluxo entre CI e CD permanece **manual**: o CD utiliza uma tag de
+imagem escolhida para realizar o deployment.
+
+Uma integração automática utilizando:
+
+```yaml
+on:
+  workflow_run:
+```
+
+fica como evolução futura.
+
+---
+
+## Roadmap
+
+As funcionalidades abaixo não devem ser confundidas com partes já
+implementadas do CI:
+
+| Funcionalidade                              | Status         |
+| ------------------------------------------- | -------------- |
+| Lint com `ruff`                             | ✅ Implementado |
+| Testes com `pytest`                         | ✅ Implementado |
+| Matrix Python 3.11/3.12                     | ✅ Implementado |
+| Cache de pip                                | ✅ Implementado |
+| `pip-audit`                                 | ✅ Implementado |
+| Reusable workflow                           | ✅ Implementado |
+| Pinning das actions por SHA                 | ✅ Implementado |
+| Branch protection                           | ✅ Configurada  |
+| Code Owners                                 | ✅ Configurado  |
+| Trivy                                       | ⏳ Roadmap      |
+| SAST adicional                              | ⏳ Roadmap      |
+| Environment `staging` com required reviewer | ⏳ Roadmap      |
+| Notificações por webhook                    | ⏳ Roadmap      |
+| Build da imagem                             | ⏳ Roadmap      |
+| Push para Docker Hub                        | ⏳ Roadmap      |
+| Tags automáticas                            | ⏳ Roadmap      |
+| Rodapé com versão/build                     | ⏳ Roadmap      |
+| Deploy automático                           | ⏳ Roadmap      |
+| Integração automática CI → CD               | ⏳ Roadmap      |
+
+---
+
+## Conclusão
+
+O CI atual implementa os principais quality gates necessários para impedir que
+código com problemas conhecidos seja incorporado à `main`.
+
+O fluxo atual é:
+
+```text
+Pull Request
+     ↓
+Lint
+     ↓
+Test — Python 3.11
+     ↓
+Test — Python 3.12
+     ↓
+Dependency Audit
+     ↓
+Branch Protection
+     ↓
+Code Review
+     ↓
+Merge
+```
+
+A branch protection transforma os resultados do CI em regras efetivas de merge.
+
+O exercício de shift-left demonstra que uma dependência vulnerável pode ser
+detectada ainda no Pull Request e impedir sua entrada na branch principal.
+
+As funcionalidades de container scanning, publicação, notificações,
+environment protegido e deployment permanecem como etapas futuras do CD.
+
+Assim, o CI atual funciona como a primeira camada de qualidade e segurança do
+processo de entrega contínua.
