@@ -29,7 +29,7 @@ quando lint, testes ou scans de segurança falham.
 | Branch protection com required checks      | Bloqueia merge com CI vermelho                 | ✅ Configurada  |
 | Code Owners                                | Exige revisão dos responsáveis pelo código     | ✅ Configurado  |
 | Environment com required reviewer          | Aprovação humana antes de passo sensível       | ⏳ Roadmap (CD) |
-| Trivy                                      | Gate de CVE na imagem e no filesystem          | ⏳ Roadmap (CD) |
+| Trivy                                      | Gate de CVE no filesystem                      | ✅ Implementado |
 | Notificação por webhook                    | O pipeline conversa com o time                 | ⏳ Roadmap (CD) |
 | Build e push no Docker Hub                 | Entrega o artefato versionado                  | ⏳ Roadmap (CD) |
 
@@ -93,9 +93,7 @@ jobs:
       security-events: write
 ```
 
-A permissão `security-events: write`, por exemplo, será necessária em uma futura
-etapa que utilize o Trivy e envie resultados em formato SARIF para o GitHub Code
-Scanning.
+A permissão `security-events: write`, é usada pelo job que roda o Trivy e envia os resultados em formato SARIF para o GitHub Code Scanning.
 
 ---
 
@@ -186,39 +184,28 @@ que o código já chegou a um ambiente de execução.
 
 ---
 
-## Container scan (`Trivy`) — roadmap
+## Filesystem scan (`Trivy`)
 
-O Trivy **ainda não faz parte do CI implementado**. Ele permanece planejado para
-a etapa de CD.
+O Trivy roda como gate de segurança no `_reusable-test.yml`, **antes do pytest**.
+Ele escaneia o filesystem do repositório (código, dependências, manifestos) em
+busca de CVEs — complementando o `pip-audit`, que só olha dependências Python.
 
-A intenção é utilizá-lo para verificar vulnerabilidades tanto nos arquivos da
-aplicação quanto na imagem de container.
+Configurações aplicadas:
 
-O Trivy complementará o `pip-audit`, pois poderá detectar vulnerabilidades que não
-estão relacionadas exclusivamente às bibliotecas Python, incluindo componentes
-do sistema operacional presentes na imagem base.
+| Campo | Efeito |
+|---|---|
+| `scan-type: fs` | Escaneia arquivos e manifestos sem buildar imagem |
+| `severity: HIGH,CRITICAL` | Só reporta o que dá para agir |
+| `exit-code: '1'` | **Transforma o scan em gate** — bloqueia o merge |
+| `ignore-unfixed: true` | Ignora CVE sem patch disponível |
+| `format: sarif` | Alimenta a aba Security → Code scanning |
 
-Configurações planejadas:
+O resultado é enviado via `github/codeql-action/upload-sarif` com `if: always()`,
+garantindo que o relatório suba mesmo quando o gate falha. O job precisa de
+`permissions: security-events: write`.
 
-| Campo                     | Efeito                                                       |
-| ------------------------- | ------------------------------------------------------------ |
-| `scan-type: fs`           | Escaneia arquivos e manifestos sem precisar buildar a imagem |
-| `severity: HIGH,CRITICAL` | Concentra o gate nas vulnerabilidades mais relevantes        |
-| `exit-code: '1'`          | Transforma o resultado do scan em um gate                    |
-| `ignore-unfixed: true`    | Ignora vulnerabilidades sem correção disponível              |
-| `format: sarif`           | Permite integração com o Code Scanning do GitHub             |
-
-Quando implementado com upload de SARIF, o job precisará de:
-
-```yaml
-permissions:
-  contents: read
-  security-events: write
-```
-
-> O Trivy também poderá identificar vulnerabilidades em componentes da imagem
-> base, além das bibliotecas Python. Por isso, a etapa de container scanning
-> complementará o `pip-audit`, em vez de substituí-lo.
+> O Trivy também poderá escanear imagens de container numa etapa futura de CD.
+> No CI atual, ele roda no modo `fs`, escaneando o filesystem do repositório.
 
 ---
 
@@ -736,6 +723,7 @@ Pull Request
    CI
      │
      ├── Lint
+     ├── Trivy
      ├── Test
      └── Dependency Audit
              │
@@ -749,7 +737,6 @@ Pull Request
             CD
              │
              ├── Build
-             ├── Trivy
              ├── Docker Hub
              └── Deploy
 ```
@@ -784,7 +771,7 @@ implementadas do CI:
 | Pinning das actions por SHA                 | ✅ Implementado |
 | Branch protection                           | ✅ Configurada  |
 | Code Owners                                 | ✅ Configurado  |
-| Trivy                                       | ⏳ Roadmap      |
+| Trivy                                       | ✅ Implementado |
 | SAST adicional                              | ⏳ Roadmap      |
 | Environment `staging` com required reviewer | ⏳ Roadmap      |
 | Notificações por webhook                    | ⏳ Roadmap      |
@@ -827,8 +814,9 @@ A branch protection transforma os resultados do CI em regras efetivas de merge.
 O exercício de shift-left demonstra que uma dependência vulnerável pode ser
 detectada ainda no Pull Request e impedir sua entrada na branch principal.
 
-As funcionalidades de container scanning, publicação, notificações,
-environment protegido e deployment permanecem como etapas futuras do CD.
+As funcionalidades de publicação, notificações, environment protegido e
+deployment permanecem como etapas futuras do CD. O scan de vulnerabilidades
+com Trivy já faz parte do CI atual, em modo filesystem.
 
 Assim, o CI atual funciona como a primeira camada de qualidade e segurança do
 processo de entrega contínua.
