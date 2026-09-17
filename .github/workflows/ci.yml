@@ -32,6 +32,11 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ['3.11', '3.12']
+    # Necessário para o upload do SARIF do Trivy (via reusable) funcionar.
+    # O reusable herda as permissões do caller — precisa declarar aqui.
+    permissions:
+      contents: read
+      security-events: write
     uses: ./.github/workflows/_reusable-test.yml
     with:
       python-version: ${{ matrix.python-version }}

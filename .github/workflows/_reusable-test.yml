@@ -21,6 +21,9 @@ jobs:
   test:
     name: Test (Python ${{ inputs.python-version }})
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
