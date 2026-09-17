@@ -111,9 +111,12 @@ jobs:
       contents: read
       actions: write
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
       - name: Trigger CD workflow
         env:
           GH_TOKEN: ${{ github.token }}
           IMAGE_TAG: ${{ needs.push.outputs.image_tag }}
         run: |
-          gh workflow run cd.yml -f image_tag="${IMAGE_TAG}"
+          gh workflow run cd.yml -f image_tag="${IMAGE_TAG}" --ref "${GITHUB_REF_NAME}"
