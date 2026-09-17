@@ -5,7 +5,6 @@ Referência do pipeline de CI: `.github/workflows/ci.yml` e o reusable
 
 O objetivo do CI é ser um conjunto de **quality gates** que bloqueiam o merge
 quando lint, testes ou scans de segurança falham.
-
 > **Status:** pipeline de CI implementado e ativo na `main`. Branch protection
 > configurada com required status checks e Code Owners. O repositório é público,
 > portanto as regras de proteção são aplicadas de verdade.
@@ -28,10 +27,10 @@ quando lint, testes ou scans de segurança falham.
 | `permissions:` mínimo + pinning por SHA    | Reduz o raio de dano do pipeline               | ✅ Implementado |
 | Branch protection com required checks      | Bloqueia merge com CI vermelho                 | ✅ Configurada  |
 | Code Owners                                | Exige revisão dos responsáveis pelo código     | ✅ Configurado  |
-| Environment com required reviewer          | Aprovação humana antes de passo sensível       | ⏳ Roadmap (CD) |
+| Environment com required reviewer          | Aprovação humana antes de passo sensível       | ✅ Implementado |
 | Trivy                                      | Gate de CVE no filesystem                      | ✅ Implementado |
-| Notificação por webhook                    | O pipeline conversa com o time                 | ⏳ Roadmap (CD) |
-| Build e push no Docker Hub                 | Entrega o artefato versionado                  | ⏳ Roadmap (CD) |
+| Notificação por webhook                    | O pipeline conversa com o time                 | ✅ Implementado |
+| Build e push no Docker Hub                 | Entrega o artefato versionado                  | ✅ Implementado |
 
 ---
 
@@ -47,10 +46,8 @@ on:
 
 * **`pull_request` para `main`** — roda em toda proposta de merge. É o gatilho
   que faz o CI ser um gate de verdade.
-
 * **`push` para `main`** — roda quando algo entra na branch principal, mantendo
   o estado da `main` visível.
-
 Uma extensão comum para a etapa de CD é adicionar:
 
 ```yaml
@@ -98,9 +95,7 @@ A permissão `security-events: write`, é usada pelo job que roda o Trivy e envi
 ---
 
 ## Os gates
-
 ### Lint (`ruff`)
-
 O lint executa:
 
 ```bash
@@ -267,7 +262,7 @@ de apoio, utilizado por outros workflows.
 
 ---
 
-## Environment com required reviewer — roadmap
+## Environment com required reviewer
 
 Um Environment é um objeto do repositório que pode agrupar:
 
@@ -297,9 +292,6 @@ rastreabilidade para a operação.
 
 O `if:` restringe o deployment para pushes na `main`, evitando que cada Pull
 Request tente executar um deploy.
-
-> O Environment com required reviewer faz parte do **roadmap de CD** e não deve
-> ser considerado um recurso já implementado no CI atual.
 
 ---
 
@@ -528,7 +520,7 @@ A ideia é manter o mesmo processo:
 
 ---
 
-## Notificações — roadmap
+## Notificações
 
 Notificações por webhook ainda **não estão implementadas no CI atual**.
 
