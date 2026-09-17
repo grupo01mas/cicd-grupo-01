@@ -1,0 +1,88 @@
+# ABOUTME: Esqueleto do pipeline de Rolling deployment via kubectl apply por SSH.
+# ABOUTME: Renomeie para cd.yml e complete os TODOs de pin da tag, apply e smoke test.
+#
+# Estratégia: Rolling Update, o padrão do Kubernetes. O `kubectl apply` de um
+# Deployment sobe o pod novo, espera ficar Ready (readinessProbe) e só então
+# remove o antigo.
+#
+# Referência: docs/cd-pipeline.md
+# Pré-requisitos: EC2_SSH_KEY, EC2_HOST, EC2_USER, DOCKERHUB_USERNAME
+# + variable KIND_CLUSTER.
+
+name: Rolling deployment
+
+on:
+  # Deploy manual: quem dispara escolhe qual tag da imagem vai para o cluster.
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: 'Tag da imagem a publicar (Docker Hub)'
+        required: true
+        default: latest
+
+permissions:
+  contents: read
+
+# Centralizados aqui para não repetir string mágica pelos steps.
+env:
+  IMAGE_NAME: app-k8s-todolist
+  NAMESPACE: todolist
+
+jobs:
+  deploy:
+    name: Deploy to kind
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Pin image tag in manifest
+        env:
+          IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ inputs.image_tag }}
+        run: |
+          sed -i "s#image: .*${IMAGE_NAME}.*#image: ${IMAGE}#" k8s/todolist.yaml
+          grep -n "image:" k8s/todolist.yaml
+
+      - name: Copy manifest to EC2
+        run: |
+          scp -i ~/.ssh/id_ed25519 \
+            -o StrictHostKeyChecking=accept-new \
+            k8s/todolist.yaml \
+            "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:~/todolist.yaml"
+
+      - name: Apply and wait for rollout
+        env:
+          KIND_CLUSTER: ${{ vars.KIND_CLUSTER || 'devops-labs' }}
+        run: |
+          ssh -i ~/.ssh/id_ed25519 \
+            -o StrictHostKeyChecking=accept-new \
+            "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" \
+            "NAMESPACE='${{ env.NAMESPACE }}' KIND_CLUSTER='${KIND_CLUSTER}' bash -s" <<'EOF'
+          set -euo pipefail
+          kubectl config use-context "kind-${KIND_CLUSTER}"
+          kubectl apply -f ~/todolist.yaml
+          kubectl rollout status deployment/todolist -n "${NAMESPACE}" --timeout=120s
+          EOF
+
+      - name: Smoke test /healthz
+        run: |
+          ssh -i ~/.ssh/id_ed25519 \
+            -o StrictHostKeyChecking=accept-new \
+            "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" bash -s <<'EOF'
+          set -euo pipefail
+          for _ in $(seq 1 20); do
+            if curl -fsS -H "Host: todolist.local" http://localhost/healthz; then
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "Smoke test failed: /healthz did not return healthy after retries"
+          exit 1
+          EOF

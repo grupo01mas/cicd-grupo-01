@@ -12,6 +12,7 @@ on:
 # Menor privilégio: o GITHUB_TOKEN deste workflow só consegue LER o repositório.
 permissions:
   contents: read
+  actions: write
 
 jobs:
   test:
@@ -70,6 +71,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    outputs:
+      image_tag: ${{ steps.tags.outputs.image_tag }}
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -89,6 +92,7 @@ jobs:
           DH_USER: ${{ secrets.DOCKERHUB_USERNAME }}
         run: |
           SHORT_SHA=$(echo "${GITHUB_SHA}" | cut -c1-7)
+          echo "image_tag=${SHORT_SHA}" >> $GITHUB_OUTPUT
           echo "tags=${DH_USER}/app-k8s-todolist:latest,${DH_USER}/app-k8s-todolist:${SHORT_SHA}" >> $GITHUB_OUTPUT
 
       - name: Build and push
@@ -97,3 +101,19 @@ jobs:
           context: .
           push: true
           tags: ${{ steps.tags.outputs.tags }}
+
+  trigger-cd:
+    name: Trigger deployment workflow
+    needs: [push]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - name: Trigger CD workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE_TAG: ${{ needs.push.outputs.image_tag }}
+        run: |
+          gh workflow run cd.yml -f image_tag="${IMAGE_TAG}"
